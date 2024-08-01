@@ -4,6 +4,7 @@ import yt_dlp
 from yt_dlp.utils import download_range_func, DownloadError
 from typing import Optional
 import yt_dlp
+import time
 
 """
 A script made because I can't trust Open Source Code and I'm competent
@@ -39,11 +40,12 @@ if __name__ == "__main__":
     print(f"{split_idx=}")
     print(f"{n_splits=}")
 
-    d : YtDlpDownloader = YtDlpDownloader(root_path='audioset', n_jobs=12, download_type='unbalanced_train', copy_and_replicate=False, n_splits=n_splits, split_idx=split_idx, overwrite_csv=False)
+    # NOTE: the root path MUST have a forward slash
+    d : YtDlpDownloader = YtDlpDownloader(root_path='./audioset/', n_jobs=12, download_type='unbalanced_train', copy_and_replicate=False, n_splits=n_splits, split_idx=split_idx, overwrite_csv=False)
     d.load_segment_csv_url()
     d.load_class_mapping_csv()
     d.load_exclusions()
-    d.init_download()
+    d.init_multipart_download()
 
     # # https://stackoverflow.com/questions/73516823/using-yt-dlp-in-a-python-script-how-do-i-download-a-specific-section-of-a-video
     # # Example usage
