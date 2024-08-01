@@ -17,13 +17,31 @@ import datetime
 import platform
 import shutil
 
+"""
+File defining the YtDlpDownloader, which makes up the bulk of this. It has
+features such as error tracking, writing to a status file as the download is in
+progress, and being able to skip existing files and/or excluded files in
+exclusions.txt
+"""
 
 # TQDM bar with number of errors, percentage, how many done
-
 
 def get_current_time_ms():
     return time.time() * 1000
 
+
+# https://stackoverflow.com/questions/71326109/how-to-hide-error-message-from-youtube-dl-yt-dlp
+class loggerOutputs:
+    def error(msg):
+        # print("Captured Error: "+msg)
+        # lel, we want this thing to SHUT UP
+        1
+    def warning(msg):
+        # print("Captured Warning: "+msg)
+        2
+    def debug(msg):
+        # print("Captured Log: "+msg)
+        3
 
 class YtDlpDownloader:
     """
@@ -57,6 +75,7 @@ class YtDlpDownloader:
         """
         # Set the parameters
         print(f"{YtDlpDownloader.__name__} initialized for '{download_type}' split ")
+
         self.root_path: str = root_path
         self.cached_dir: Path = Path("./cached")
 
@@ -200,7 +219,7 @@ class YtDlpDownloader:
             with open(exclusion_path, "r") as f:
                 raw_lines = f.readlines()
 
-            exclusions = [x.strip() for x in raw_lines]
+            self.exclusions = [x.strip() for x in raw_lines]
 
         # we're going to trust the user and believe that the ids used in the exclusions are valid
 
@@ -219,15 +238,24 @@ class YtDlpDownloader:
         self,
         id: int,
         chunk: pd.DataFrame,
-        total_file_count: ListProxy,
-        total_errors: ListProxy,
+        total_file_count: DictProxy,
+        total_errors: DictProxy,
         lock: Lock,
         update_mod: int = 10,
     ):
-        print(f"{type(chunk)=}")
+        """Function to run in each multiprocess
+
+        Args:
+            id (int): id of job
+            chunk (pd.DataFrame): subpart of the split of the dataset assigned to the job
+            total_file_count (DictProxy): dictionary containing file counts 
+            total_errors (DictProxy): dictionary containing errors
+            lock (Lock): sempahore used for accessing data
+            update_mod (int, optional): How often to update the counts for the UI. Defaults to 10.
+        """
         # print("Simulate download")
         local_errors: list[str] = []
-        local_success_count: int = 0
+        local_files_count: int = 0
 
         for i, row in chunk.iterrows():
             time.sleep(random.uniform(0.1, 0.5))  # Simulate download time
@@ -251,50 +279,58 @@ class YtDlpDownloader:
             clip_labels: list[str] = []
             lcl_fs: list[str] = []
             positive_machine_labels: list[str] = positive_labels.split(",")
-
+                
+            path_w_codec : Path = Path(filename).with_suffix(
+                    self.codec_type
+                )
+            
+            # saves display labels and checks for all paths the audio should have in theory
             for label in positive_machine_labels:
                 display_label = self.machine_to_display_mapping[label]
                 clip_labels.append(display_label)
                 display_path: Path = self.root_path / Path(display_label)
                 os.makedirs(str(display_path), exist_ok=True)
-                lcl_path: Path = display_path / Path(filename).with_suffix(
-                    self.codec_type
-                )
+                lcl_path: Path = display_path / path_w_codec
                 if lcl_path.exists():
                     lcl_fs.append(lcl_path)
 
-            if filename in self.exclusions:
-                print(f"{filename} excluded, so we won't download it")
-                continue
+            download : bool = True
+
+            if str(path_w_codec) in self.exclusions:
+                # print(f"{filename} excluded, so we won't download it")
+                download = False
+                # continue
             # if both labels were found to exist locally, skip
             elif len(lcl_fs) == len(positive_machine_labels):
-                print(f"Already exists at {lcl_fs}")
-                print("Skipping...")
-                continue
+                # print(f"Already exists at {lcl_fs}")
+                # print("Skipping...")
+                download = False
+                # continue
 
-            # if random.random() < 0.9:  # 90% success rate
-            #     local_files += 1
-            # else:
-            #     local_errors.append([f"Error{id}"])
-            # print(f"{clip_labels=}")
+            if download:
 
-            # DON'T need to add the extension since it already has the %(ext)s part at this point
-            dwnld_paths: list[Path] = [
-                Path(self.root_path) / Path(lbl) / Path(filename) for lbl in clip_labels
-            ]
-            # print(f"{dwnld_paths=}")
-            result_tuple: tuple[int, Exception] = self.download_audio_section(
-                ytid, start_seconds, end_seconds, dwnld_paths
-            )
-            result_code, exception = result_tuple
-            if result_code == 0:
-                local_success_count += 1
+                # DON'T need to add the extension since it already has the %(ext)s part at this point
+                # fot context, YT-DLP needs the %(ext)s part for some reason
+                dwnld_paths: list[Path] = [
+                    Path(self.root_path) / Path(lbl) / Path(filename) for lbl in clip_labels
+                ]
+                # print(f"{dwnld_paths=}")
+                result_tuple: tuple[int, Exception] = self.download_audio_section(
+                    ytid, start_seconds, end_seconds, dwnld_paths
+                )
+                result_code, exception = result_tuple
+                # print(f"{result_code=}")
+                if result_code == 0:
+                    local_files_count += 1
+                else:
+                    local_errors.append(str(exception))
             else:
-                local_errors.append(str(exception))
+                local_files_count+=1
 
             if i % update_mod == 0:
                 with lock:
-                    total_file_count[f"job{id}"] = local_success_count
+                    # print(f"Local success count {local_files_count}")
+                    total_file_count[f"job{id}"] = local_files_count
                     total_errors[f"job{id}"] = local_errors
 
     def download_audio_section(
@@ -312,6 +348,7 @@ class YtDlpDownloader:
             "quiet": quiet,
             "no_warnings": quiet,  # Suppress warnings if quiet is True
             "format": "bestaudio/best",
+            "logger" : loggerOutputs,
             "postprocessors": [
                 {
                     "key": "FFmpegExtractAudio",
@@ -330,10 +367,8 @@ class YtDlpDownloader:
 
         ex: Exception = None
 
-        print(f"{dwnld_paths=}")
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             try:
-                print(f"{url=}")
                 retcode: int = ydl.download([url])
 
                 if len(dwnld_paths) > 1:
@@ -342,6 +377,7 @@ class YtDlpDownloader:
                             dwnld_paths[0].with_suffix(self.codec_type),
                             path.with_suffix(self.codec_type),
                         )
+                return (retcode, None)
 
             except Exception as e:
                 # raise e
@@ -372,6 +408,9 @@ class YtDlpDownloader:
         # don't care that much about overlap
         bounds: tuple = (sublen * self.split_idx + 1, sublen * (self.split_idx + 1) - 1)
 
+        print(f"n_jobs={self.n_jobs}")
+        print(f"n_splits={self.n_splits}")
+        print(f"split_idx={self.split_idx}")
         print(f"Total length of dataset is {len(self.metadata)}")
         print(f"Downloading from indices {bounds[0]}  to index {bounds[1]}")
         subset: pd.DataFrame = self.metadata.loc[bounds[0] : bounds[1]]
@@ -391,15 +430,15 @@ class YtDlpDownloader:
 
             processes = []
             print("Initializing processes")
-            # for i in range(self.n_jobs):
-            #     p = mp.Process(
-            #         target=self.downloader,
-            #         args=(i, chunks[i], job_filescnt_dict, job_errors_dict, lock),
-            #     )
-            #     processes.append(p)
-            #     p.start()
-            i: int = 0
-            self.downloader(i, chunks[i], job_filescnt_dict, job_errors_dict, lock)
+            for i in range(self.n_jobs):
+                p = mp.Process(
+                    target=self.downloader,
+                    args=(i, chunks[i], job_filescnt_dict, job_errors_dict, lock),
+                )
+                processes.append(p)
+                p.start()
+            # i: int = 0
+            # self.downloader(i, chunks[i], job_filescnt_dict, job_errors_dict, lock)
 
             with tqdm(total=expected_total_files, desc="Total Files") as pbar:
                 last_total = 0
@@ -419,7 +458,7 @@ class YtDlpDownloader:
                         percentage=YtDlpDownloader.percentage_fmt(curr_pcnt),
                     )
                     last_total = total_files_cnt
-                    # time.sleep(0.1)
+                    time.sleep(0.1)
 
                     # write a checkin
                     if get_current_time_ms() - last_time_checkedin > checkin_debounce:

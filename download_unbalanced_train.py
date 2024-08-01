@@ -29,19 +29,23 @@ if __name__ == "__main__":
 
     n_splits: int = 1
     split_idx: int = 0
+    n_jobs : int = 5
 
     if args.n_splits:
         n_splits: int = args.n_splits
 
     if args.split_idx:
         split_idx: int = args.split_idx
+    
+    if args.n_jobs:
+        n_jobs : int = args.n_jobs
 
     print("Downloading the 'unbalanced_train' split in the wav file format...")
     print(f"{split_idx=}")
     print(f"{n_splits=}")
 
     # NOTE: the root path MUST have a forward slash
-    d : YtDlpDownloader = YtDlpDownloader(root_path='./audioset/', n_jobs=12, download_type='unbalanced_train', copy_and_replicate=False, n_splits=n_splits, split_idx=split_idx, overwrite_csv=False)
+    d : YtDlpDownloader = YtDlpDownloader(root_path='./audioset/', n_jobs=n_jobs, download_type='unbalanced_train', copy_and_replicate=False, n_splits=n_splits, split_idx=split_idx, overwrite_csv=False)
     d.load_segment_csv_url()
     d.load_class_mapping_csv()
     d.load_exclusions()

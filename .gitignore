@@ -1,0 +1,7 @@
+cached/
+audioset/
+__pycache__/
+exclusions.txt
+last_status.json
+*.mp3
+*.wav
