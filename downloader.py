@@ -138,19 +138,23 @@ class YtDlpDownloader:
             print(f"Downloading from {self.segment_csv_url}")
             self.metadata: pd.DataFrame = pd.read_csv(
                 self.segment_csv_url,
-                sep=",",
+                sep=", ",
                 skiprows=3,
                 header=None,
                 names=["YTID", "start_seconds", "end_seconds", "positive_labels"],
                 engine="python",
             )
             print(f"Saved to {self.segment_meta_path}")
-            self.metadata.to_csv(str(self.segment_meta_path))
+            # this sep is pretty important since the others depend on it
+            # Why "|", instead of ","?
+            # it's because of there being a quoted comma separated string inside the CSV containing all the labels
+            # frustratingly enough, the separator can only be a one-character string
+            self.metadata.to_csv(str(self.segment_meta_path), sep="|")
 
         else:
             self.metadata: pd.DataFrame = pd.read_csv(
                 str(self.segment_meta_path),
-                sep=",",
+                sep="|",
                 skiprows=3,
                 header=None,
                 names=["YTID", "start_seconds", "end_seconds", "positive_labels"],
