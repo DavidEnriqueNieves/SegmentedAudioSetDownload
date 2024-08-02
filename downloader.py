@@ -258,7 +258,6 @@ class YtDlpDownloader:
         local_files_count: int = 0
 
         for i, row in chunk.iterrows():
-            time.sleep(random.uniform(0.1, 0.5))  # Simulate download time
             ytid: str = row["YTID"]
             start_seconds: str = row["start_seconds"]
             end_seconds: str = row["end_seconds"]
@@ -458,7 +457,6 @@ class YtDlpDownloader:
                         percentage=YtDlpDownloader.percentage_fmt(curr_pcnt),
                     )
                     last_total = total_files_cnt
-                    time.sleep(0.1)
 
                     # write a checkin
                     if get_current_time_ms() - last_time_checkedin > checkin_debounce:
