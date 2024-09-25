@@ -7,17 +7,20 @@ import yt_dlp
 import time
 
 """
-A script made because I can't trust Open Source Code and I'm competent
+A script made because I can't trust Open Source Code and I'm incompetent
 Based off 
 """
 
 if __name__ == "__main__":
 
     argparser: ArgumentParser = ArgumentParser()
-    argparser.add_argument("--n_splits", type=int)
-    argparser.add_argument("--split_idx", type=int)
-    argparser.add_argument("--n_jobs", type=int)
+    argparser.add_argument("--n_splits", type=int, default=1)
+    argparser.add_argument("--split_idx", type=int, default=0)
+    argparser.add_argument("--n_jobs", type=int, default=1)
     argparser.add_argument("--debug", action="store_true")
+    argparser.add_argument("--exclusions", type=str, default="unavailable_urls.txt")
+    argparser.add_argument("--sleep_amount", type=int, default=2500)
+    
     args: Namespace = argparser.parse_args()
 
     if args.debug:
@@ -39,17 +42,17 @@ if __name__ == "__main__":
     
     if args.n_jobs:
         n_jobs : int = args.n_jobs
-
+    
     print("Downloading the 'unbalanced_train' split in the wav file format...")
     print(f"{split_idx=}")
     print(f"{n_splits=}")
 
     # NOTE: the root path MUST have a forward slash
-    d : YtDlpDownloader = YtDlpDownloader(root_path='./audioset/', n_jobs=n_jobs, download_type='unbalanced_train', copy_and_replicate=False, n_splits=n_splits, split_idx=split_idx, overwrite_csv=False)
+    d : YtDlpDownloader = YtDlpDownloader(root_path='./audioset/', n_jobs=n_jobs, download_type='unbalanced_train', copy_and_replicate=False, n_splits=n_splits, split_idx=split_idx, overwrite_csv=False, segments_path="./cached/missing_train_segments.csv")
     d.load_segment_csv_url()
     d.load_class_mapping_csv()
-    d.load_exclusions()
-    d.init_multipart_download()
+    d.load_exclusions(exclusion_path=args.exclusions)
+    d.init_multipart_download(sleep_amnt=args.sleep_amount)
 
     # # https://stackoverflow.com/questions/73516823/using-yt-dlp-in-a-python-script-how-do-i-download-a-specific-section-of-a-video
     # # Example usage

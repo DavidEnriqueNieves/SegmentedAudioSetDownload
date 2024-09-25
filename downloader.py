@@ -61,6 +61,7 @@ class YtDlpDownloader:
         overwrite_csv: bool = False,
         root_path: str = "./audioset",
         codec_type: str = ".wav",
+        segments_path : str = None,
     ):
         """
         This method initializes the class.
@@ -117,10 +118,15 @@ class YtDlpDownloader:
             f"http://storage.googleapis.com/us_audioset/youtube_corpus/v1/csv/class_labels_indices.csv"
         )
 
-        # local path to save metadata CSV
-        self.segment_meta_path: Path = self.cached_dir / Path(
-            f"{self.download_type}_segments.csv"
-        )
+        if(segments_path is None):
+            # local path to save metadata CSV
+            self.segment_meta_path: Path = self.cached_dir / Path(
+                f"{self.download_type}_segments.csv"
+            )
+        else:
+            print(f"Custom segment meta path is {segments_path}")
+            self.segment_meta_path : Path = Path(segments_path)
+
         # local path to save labels meta csv
         self.segment_c2l_path: Path = self.cached_dir / Path("class_labels_indices.csv")
         self.overwrite_csv: bool = overwrite_csv
@@ -201,7 +207,7 @@ class YtDlpDownloader:
         )
         return
 
-    def load_exclusions(self, exclusion_path: str = "./exclusions.txt"):
+    def load_exclusions(self, exclusion_path: str):
         """Loads exclusions to then use when determining whether to download a clip or not
 
         Args:
@@ -246,6 +252,7 @@ class YtDlpDownloader:
         total_errors: DictProxy,
         lock: Lock,
         update_mod: int = 10,
+        sleep_amnt : int = 2000
     ):
         """Function to run in each multiprocess
 
@@ -259,6 +266,7 @@ class YtDlpDownloader:
         """
         # print("Simulate download")
         local_errors: list[str] = []
+        local_error_ytids : list[str] = []
         local_files_count: int = 0
 
         for i, row in chunk.iterrows():
@@ -305,7 +313,7 @@ class YtDlpDownloader:
                 # continue
             # if both labels were found to exist locally, skip
             elif len(lcl_fs) == len(positive_machine_labels):
-                # print(f"Already exists at {lcl_fs}")
+                # print(f"Already exists at {lcl_fs}, skipping")
                 # print("Skipping...")
                 download = False
                 # continue
@@ -326,7 +334,15 @@ class YtDlpDownloader:
                 if result_code == 0:
                     local_files_count += 1
                 else:
-                    local_errors.append(str(exception))
+                    exception_str : str = str(exception)
+                    if "Sign in to confirm you\u2019re not a bot. This helps protect our community. Learn more" in exception_str:
+                        print(f"\n##############################\nJob number {id} got bot_sniped! {str(exception_str)} \n")
+                        print(f"Sleeping for {sleep_amnt}s ...")
+                        time.sleep(sleep_amnt)
+                        print("Continuing the search...")
+                    else:
+                        local_errors.append(exception_str)
+                        local_error_ytids.append(ytid)
             else:
                 local_files_count+=1
 
@@ -335,6 +351,7 @@ class YtDlpDownloader:
                     # print(f"Local success count {local_files_count}")
                     total_file_count[f"job{id}"] = local_files_count
                     total_errors[f"job{id}"] = local_errors
+                    total_errors[f"error_ytids_{id}"] = local_error_ytids
 
     def download_audio_section(
         self,
@@ -393,7 +410,7 @@ class YtDlpDownloader:
                 return (1, ex)
 
     def init_multipart_download(
-        self, format: str = "wav", quality: int = 5, checkin_debounce: int = 20 * 1000
+        self, format: str = "wav", quality: int = 5, checkin_debounce: int = 20 * 1000, sleep_amnt : int = 2000, update_mod : int  = 10
     ):
         """Initializes the download to be done with a variable amount of workers
 
@@ -401,6 +418,7 @@ class YtDlpDownloader:
             format (str, optional): format to download in. Defaults to 'wav'.
             quality (int, optional): Defaults to 5.
             checkin_debounce (int, optional): Time to wait between json status saving. Defaults to 20*1000.
+            sleep_amnt (int) : Time to sleep within the same thread before continuing to download
         """
 
         self.format: str = format
@@ -421,7 +439,7 @@ class YtDlpDownloader:
         expected_total_files: int = bounds[1] - bounds[0]
 
         chunks: list[pd.DataFrame] = np.array_split(subset, self.n_jobs)
-        print(f"{type(chunks)=}")
+        # print(f"{type(chunks)=}")
 
         last_time_checkedin: int = get_current_time_ms()
 
@@ -436,7 +454,7 @@ class YtDlpDownloader:
             for i in range(self.n_jobs):
                 p = mp.Process(
                     target=self.downloader,
-                    args=(i, chunks[i], job_filescnt_dict, job_errors_dict, lock),
+                    args=(i, chunks[i], job_filescnt_dict, job_errors_dict, lock, update_mod, sleep_amnt),
                 )
                 processes.append(p)
                 p.start()
@@ -454,6 +472,8 @@ class YtDlpDownloader:
                     for key in job_errors_dict.keys():
                         total_errors_cnt += len(job_errors_dict[key])
 
+                    # print(f"{total_files_cnt=}")
+                    # print(f"{total_errors_cnt=}")
                     curr_pcnt: float = float(total_files_cnt) / expected_total_files
                     pbar.update(total_files_cnt - last_total)
                     pbar.set_postfix(
@@ -471,11 +491,12 @@ class YtDlpDownloader:
 
             for p in processes:
                 p.join()
+            # for value in job_filescnt_dict.values():
+                # print(f"Total files downloaded: {job_filescnt_dict.value}")
+                # print(f"Total errors: {len(job_errors_dict)}")
 
-            print(f"Total files downloaded: {job_filescnt_dict.value}")
-            print(f"Total errors: {len(job_errors_dict)}")
-
-    def save_status_json(self, total_errors, current_errors, curr_pcnt):
+    def save_status_json(self, total_errors : dict, current_errors : int, curr_pcnt : int):
+        # total_errors is a dict with a job id as the key and the error messages as values
         last_status_dict: dict = {
             "Machine Name": self.hostname,
             "download_path": os.path.realpath(self.root_path),
@@ -487,5 +508,28 @@ class YtDlpDownloader:
             "current_pcnt": curr_pcnt,
         }
 
+        # print(f"{total_errors}")
+
         with open("last_status.json", "w", encoding="utf-8") as f:
             json.dump(last_status_dict, f, indent=4)
+        
+        # start with the exclusions we had originally read in
+        error_ytids : str = "\n".join(self.exclusions) + "\n"
+
+        # write the errored YouTube IDs accrued thus far so that we can reuse them later
+        for job_key in total_errors.keys():
+            if "error_ytids" in job_key:
+                # print(f"Writing YTIDs from {job_key}")
+                error_ytids+="\n".join(total_errors[job_key])
+        with open("unavailable_urls.txt", "w", encoding="utf-8") as f:
+            f.write(error_ytids)
+        
+    def save_all_errors_txt(self, total_errors_ids : dict):
+        # total_error_ids is a dict with a job id as the key and the error ytids as values
+        total_errors_ytids : list[str] = []
+        for key in total_errors_ids.keys():
+            total_errors_ytids.extend(total_errors_ids[key])
+        print(f"Length of total error ytids is {len(total_errors_ytids)}")
+
+        with open("last_status.txt", "w", encoding="utf-8") as f:
+            json.dump("\n".join(total_errors_ytids), f, indent=4)
